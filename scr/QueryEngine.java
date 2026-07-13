@@ -17,6 +17,11 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+
+import relation.KeyType;
+import relation.RAParser;
+import relation.Table;
+
 public class QueryEngine {
 
     // The "catalog": maps a table name (like "r") to the actual Table object.
@@ -54,30 +59,35 @@ public class QueryEngine {
             // 1) run the child first
             // 2) apply select. The query writes "id = 5"; Table.sel wants "id == 5",
             //    so pass it through RAParser.condition(...) which fixes the "=".
-            // TODO: return in.sel( RAParser.condition(n.arg) );
+             return in.sel(RAParser.condition(n.arg));
         }
 
         if (n.op.equals("proj")) {
             // The arg looks like "fname , lname"; Table.proj wants "fname lname"
             // (no commas). RAParser.attrs(...) does that clean-up for you.
-            // TODO: return eval(left).proj( RAParser.attrs(n.arg) );
+            return eval(left).proj(RAParser.attrs(n.arg));
         }
 
         if (n.op.equals("join")) {
             Node right = n.children.get(1);         // join has TWO children
             // The arg looks like "r.a = s.b". RAParser.joinLeft gives "a", joinRight gives "b".
-            // TODO: Table L = eval(left);
-            //       Table R = eval(right);
-            //       return L.join( RAParser.joinLeft(n.arg), RAParser.joinRight(n.arg), R );
+            Table L = eval(left);
+            Table R = eval(right);
+
+            return L.join(
+                RAParser.joinLeft(n.arg),
+                RAParser.joinRight(n.arg),
+                R
+            );
         }
 
         if (n.op.equals("union")) {
             // union/minus have no [ ] arg :  just two children.
-            // TODO: return eval(left).union( eval(n.children.get(1)) );
+            return eval(left).union(eval(n.children.get(1)));
         }
 
         if (n.op.equals("minus")) {
-            // TODO: return eval(left).minus( eval(n.children.get(1)) );
+            return eval(left).minus(eval(n.children.get(1)));
         }
 
         return null;   // <- once every case above returns, this line is never reached
@@ -110,7 +120,64 @@ public class QueryEngine {
     //  A schema() helper is stubbed for you below.
     // =================================================================================
     public Node optimize(Node n) {
-        // TODO Part E : push sel nodes down; return the rewritten tree.
+        // Base case
+        if (n == null || n.isTable()) {
+            return n;
+        }
+
+        // Child Optimization
+        for (int i = 0; i < n.children.size(); i++) {
+            n.children.set(i, optimize(n.children.get(i)));
+        }
+
+        if (n.op.equals("sel")
+                && n.children.size() == 1
+                && n.children.get(0).op.equals("join")) {
+
+            Node joinNode = n.children.get(0);
+
+            Node leftChild  = joinNode.children.get(0);
+            Node rightChild = joinNode.children.get(1);
+
+            String column = n.arg.trim().split("\\s+")[0];
+
+            if (column.contains(".")) {
+                column = column.substring(column.indexOf('.') + 1);
+            }
+
+            Set<String> leftSchema  = schema(leftChild);
+            Set<String> rightSchema = schema(rightChild);
+
+            boolean belongsToLeft  = leftSchema.contains(column);
+            boolean belongsToRight = rightSchema.contains(column);
+
+            // Pushes onto left
+            if (belongsToLeft && !belongsToRight) {
+                Node pushedSelection = new Node();
+
+                pushedSelection.op  = "sel";
+                pushedSelection.arg = n.arg;
+                pushedSelection.children.add(leftChild);
+
+                joinNode.children.set(0, pushedSelection);
+
+                return joinNode;
+            }
+
+            // Pushes onto right
+            if (belongsToRight && !belongsToLeft) {
+                Node pushedSelection = new Node();
+
+                pushedSelection.op  = "sel";
+                pushedSelection.arg = n.arg;
+                pushedSelection.children.add(rightChild);
+
+                joinNode.children.set(1, pushedSelection);
+
+                return joinNode;
+            }
+        }
+
         return n;
     }
 
@@ -118,11 +185,41 @@ public class QueryEngine {
      *  leaf -> that table's columns;  proj -> its projected columns;
      *  join -> both children's columns combined;  sel/union/minus -> same as child 0. */
     private Set<String> schema(Node n) {
-        // TODO (only if you use it): fill this in for the pushdown test.
-        //   if (n.isTable()) return new HashSet<>(Arrays.asList(tables.get(n.table).columns()));
-        //   ...
-        return new HashSet<>();
+
+    if (n.isTable()) {
+        return new HashSet<>(
+            Arrays.asList(tables.get(n.table).columns())
+        );
     }
+
+    if (n.op.equals("proj")) {
+        return new HashSet<>(
+            Arrays.asList(
+                RAParser.attrs(n.arg).split("\\s+")
+            )
+        );
+    }
+
+    if (n.op.equals("join")) {
+        Set<String> result =
+            new HashSet<>(schema(n.children.get(0)));
+
+        result.addAll(
+            schema(n.children.get(1))
+        );
+
+        return result;
+    }
+
+    if (n.op.equals("sel")
+            || n.op.equals("union")
+            || n.op.equals("minus")) {
+
+        return schema(n.children.get(0));
+    }
+
+    return new HashSet<>();
+}
 
     // =================================================================================
     //  main : builds the tables, parses the query, prints the tree, runs eval.
