@@ -17,6 +17,7 @@ package relation;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -31,13 +32,20 @@ public class Table {
     private Class[]  domain;                     // column types,  e.g. {Integer, String, String}
     private String[] key;                        // primary-key column(s)
     private List<Comparable[]> tuples = new ArrayList<>();          // the rows
+    
+    // This boolean controls which indexing method is used
+    // false: indexing with TreeMap 
+    // true: indexing with HashMap
+    private boolean mode = false;               
 
     // PART A : the index maps a key value to its row, so a lookup is instant.
     // We use a TreeMap: it keeps keys SORTED, so it supports exact lookups (get) AND range
     // queries (subMap). A Map also holds each key once, so it eliminates duplicates for free
     // (that is why proj/union below need no HashSet). Swap to new HashMap<>() for O(1) exact
     // lookups if you don't need range().
-    private Map<KeyType, Comparable[]> index = new TreeMap<>();
+
+    // index adjusted to account for mode (TreeMap, HashMap)
+    private Map<KeyType, List<Comparable[]>> index = mode ? new HashMap<>() : new TreeMap<>();
 
     // Counts tuple comparisons, so you can PROVE the speedup in Part A.
     public static long comparisons = 0;
@@ -57,7 +65,7 @@ public class Table {
     /** Add a row (and record it in the index, so lookups stay correct). */
     public Table add(Comparable[] row) {
         tuples.add(row);
-        index.put(keyOf(row), row);             // <- this is why sel(KeyType) can be O(1)
+        index.computeIfAbsent(keyOf(row), k -> new ArrayList<>()).add(row);
         return this;
     }
 
@@ -80,6 +88,10 @@ public class Table {
         List<Comparable[]> rows = new ArrayList<>();
 
         // TODO Part A (3 lines) : see HOW above.
+        comparisons++;
+        List<Comparable[]> bucket = index.get(keyValue);
+        if (bucket != null) rows.addAll(bucket);
+
 
         return new Table(name, attribute, domain, key).addAll(rows);
     }
@@ -92,7 +104,15 @@ public class Table {
     public Table range(KeyType lo, KeyType hi) {
         List<Comparable[]> rows = new ArrayList<>();
         // TODO Part A (range): use index.subMap(lo, true, hi, true).values(); see HINT above.
-        return new Table(name, attribute, domain, key).addAll(rows);
+        if (!mode) {
+            for (List<Comparable[]> bucket : ((NavigableMap<KeyType, List<Comparable[]>>) index)
+                    .subMap(lo, true, hi, true).values()) {
+                rows.addAll(bucket);
+}
+            return new Table(name, attribute, domain, key).addAll(rows);
+        } else {
+            throw new UnsupportedOperationException("range() requires mode = 0 (TreeMap)");
+        } 
     }
 
     /** Fast natural join: match rows of THIS table to rows of table2 that share the
@@ -114,7 +134,46 @@ public class Table {
 
         // TODO Part A : probe table2.index instead of a nested loop.
 
-        return null;
+        int[] thisPos = new int[table2.key.length];
+        for(int i = 0; i < table2.key.length; i++) {
+            thisPos[i] = columnIndex(table2.key[i]);
+        }
+
+        List<String> attributeList = new ArrayList<>(Arrays.asList(attribute));
+        List<Class> domainList = new ArrayList<>(Arrays.asList(domain));
+        List<Integer> table2KeepPos = new ArrayList<>();
+        for (int i = 0; i < table2.attribute.length; i++) {
+            if (!containsAll(new String[]{table2.attribute[i]}, table2.key)) { 
+                attributeList.add(table2.attribute[i]);
+                domainList.add(table2.domain[i]);
+                table2KeepPos.add(i);
+            }
+        }
+
+        String[] newAttribute = attributeList.toArray(new String[0]);
+        Class[] newDomain = domainList.toArray(new Class[0]);
+
+        List<Comparable[]> rows = new ArrayList<>();
+        for (Comparable[] row : tuples) {
+            Comparable[] keyVals = new Comparable[thisPos.length];
+            for (int i = 0; i < thisPos.length; i++) keyVals[i] = row[thisPos[i]];
+            KeyType thatKey = new KeyType(keyVals);
+
+            comparisons++;
+            List<Comparable[]> matches = table2.index.get(thatKey);
+            if (matches != null) {
+                for (Comparable[] match : matches) {        // one probe row can now match MANY
+                    Comparable[] newRow = new Comparable[newAttribute.length];
+                    System.arraycopy(row, 0, newRow, 0, row.length);
+                    for (int i = 0; i < table2KeepPos.size(); i++) {
+                        newRow[row.length + i] = match[table2KeepPos.get(i)];
+                    }
+                    rows.add(newRow);
+                    }
+                }
+        }
+
+        return new Table(name, newAttribute, newDomain, key).addAll(rows);
     }
 
     // =================================================================================
