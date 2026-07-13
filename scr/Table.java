@@ -187,29 +187,46 @@ public class Table {
     // =================================================================================
 
     /** Keep only the named columns. (Right now it KEEPS duplicates : make it drop them.) */
-    public Table proj(String attrs) {
+     public Table proj(String attrs) {
         String[] cols = attrs.split(" ");
         int[]    pos  = columnIndexes(cols);
         String[] newKey = containsAll(cols, key) ? key : cols;   // key must exist in the result
         // Duplicate elimination is AUTOMATIC: a Map holds each key once, so putting every
         // projected row into a Map (keyed by the whole row) drops repeats for free.
-        Map<KeyType, Comparable[]> uniq = new LinkedHashMap<>();
+        HashSet<KeyType> found = new HashSet<>();
+        List<Comparable[]> rows = new ArrayList<>();
         for (Comparable[] row : tuples) {
             Comparable[] newRow = new Comparable[cols.length];
             for (int i = 0; i < cols.length; i++) newRow[i] = row[pos[i]];
-            uniq.put(new KeyType(newRow), newRow);               // repeats overwrite -> deduped
+            KeyType keyType = new KeyType(newRow);
+            if (found.add(keyType)) {
+                rows.add(newRow);
+            }
         }
-        return new Table(name, cols, domainsOf(cols), newKey).addAll(new ArrayList<>(uniq.values()));
+        return new Table(name, cols, domainsOf(cols), newKey).addAll(rows);
     }
 
     /** Combine the rows of both tables. (Right now it KEEPS duplicates : make it drop them.) */
     public Table union(Table table2) {
         if (!sameShape(table2)) return null;
         // Duplicate elimination is AUTOMATIC: a Map keyed by the whole row keeps each row once.
-        Map<KeyType, Comparable[]> uniq = new LinkedHashMap<>();
-        for (Comparable[] row : tuples)        uniq.put(new KeyType(row), row);
-        for (Comparable[] row : table2.tuples) uniq.put(new KeyType(row), row);
-        return new Table(name, attribute, domain, key).addAll(new ArrayList<>(uniq.values()));
+         HashSet<KeyType> found = new HashSet<>();
+         List<Comparable[]> rows = new ArrayList<>();
+        for (Comparable[] row : tuples) {        
+            KeyType rowKey = new KeyType(row);
+
+        if (found.add(rowKey)) {
+            rows.add(row);
+        }
+        }
+   for (Comparable[] row : table2.tuples) {
+        KeyType rowKey = new KeyType(row);
+
+        if (found.add(rowKey)) {
+            rows.add(row);
+        }
+    }
+        return new Table(name, attribute, domain, key).addAll(rows);
     }
 
     // =================================================================================
