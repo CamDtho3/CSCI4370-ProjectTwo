@@ -120,26 +120,26 @@ public class QueryEngine {
     //  A schema() helper is stubbed for you below.
     // =================================================================================
     public Node optimize(Node n) {
-        // Base case
+
         if (n == null || n.isTable()) {
             return n;
         }
 
-        // Child Optimization
         for (int i = 0; i < n.children.size(); i++) {
             n.children.set(i, optimize(n.children.get(i)));
         }
 
-        if (n.op.equals("sel")
+        if ("sel".equals(n.op)
                 && n.children.size() == 1
-                && n.children.get(0).op.equals("join")) {
+                && "join".equals(n.children.get(0).op)) {
 
             Node joinNode = n.children.get(0);
 
             Node leftChild  = joinNode.children.get(0);
             Node rightChild = joinNode.children.get(1);
 
-            String column = n.arg.trim().split("\\s+")[0];
+            String condition = RAParser.condition(n.arg);
+            String column = condition.trim().split("\\s+")[0];
 
             if (column.contains(".")) {
                 column = column.substring(column.indexOf('.') + 1);
@@ -151,11 +151,9 @@ public class QueryEngine {
             boolean belongsToLeft  = leftSchema.contains(column);
             boolean belongsToRight = rightSchema.contains(column);
 
-            // Pushes onto left
             if (belongsToLeft && !belongsToRight) {
                 Node pushedSelection = new Node();
-
-                pushedSelection.op  = "sel";
+                pushedSelection.op = "sel";
                 pushedSelection.arg = n.arg;
                 pushedSelection.children.add(leftChild);
 
@@ -164,11 +162,9 @@ public class QueryEngine {
                 return joinNode;
             }
 
-            // Pushes onto right
             if (belongsToRight && !belongsToLeft) {
                 Node pushedSelection = new Node();
-
-                pushedSelection.op  = "sel";
+                pushedSelection.op = "sel";
                 pushedSelection.arg = n.arg;
                 pushedSelection.children.add(rightChild);
 
